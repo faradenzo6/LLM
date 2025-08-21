@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<title>Документы — Live-превью</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --bg:#0b1b2b; --panel:#11263a; --accent:#2684ff; --text:#e6f0ff; --muted:#9bb3cc; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial; }
+  header { padding:14px 18px; border-bottom:1px solid #1c3550; display:flex; gap:14px; align-items:center; }
+  header h1 { margin:0; font-size:16px; font-weight:600; flex:1; }
+  nav button { border:0; padding:8px 12px; border-radius:8px; cursor:pointer; background:#243b5a; color:#fff; }
+  nav button.active { background: var(--accent); }
+  main { min-height: calc(100vh - 56px); }
+  section { display:none; height:100%; }
+  section.active { display:grid; grid-template-columns: 420px 1fr; }
+  .left { padding:16px; background:var(--panel); border-right:1px solid #18324b; }
+  .row { margin-bottom:10px; }
+  label { display:block; margin:0 0 6px; color:var(--muted); font-size:12px; }
+  input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid #244663; background:#0d2032; color:var(--text); outline:none; }
+  textarea { min-height:100px; resize:vertical; }
+  .grid { display:grid; gap:12px; }
+  .actions { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+  button { border:0; padding:10px 14px; border-radius:10px; cursor:pointer; color:#fff; background: var(--accent); }
+  button.secondary { background:#243b5a; }
+  .right { position:relative; }
+  iframe { width:100%; height:100%; border:0; background:#fff; color:#000; }
+  pre { background:#0d2032; padding:10px; border-radius:8px; overflow:auto; max-height:300px; }
+</style>
+<body>
+<header>
+  <h1>Документы</h1>
+  <nav>
+    <button id="tabBtn-tpl" class="active" onclick="showTab('tpl')">Шаблоны</button>
+    <button id="tabBtn-edit" onclick="showTab('edit')">Редактор</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Вкладка шаблонов -->
+  <section id="tab-tpl" class="active">
+    <div class="left">
+      <div class="grid">
+        <div class="row">
+          <label>Шаблон</label>
+          <select id="tpl"></select>
+        </div>
+        <div id="fields"></div>
+        <div class="actions">
+          <button id="dl_html">Скачать HTML</button>
+          <button id="dl_pdf" class="secondary">Скачать PDF</button>
+        </div>
+        <div class="row muted" id="hint"></div>
+      </div>
+    </div>
+    <div class="right"><iframe id="preview"></iframe></div>
+  </section>
+
+  <!-- Вкладка редактора -->
+  <section id="tab-edit">
+    <div class="left">
+      <div class="grid">
+        <div class="row">
+          <label>Файл для редактирования</label>
+          <input type="file" id="editFile">
+        </div>
+        <div class="row">
+          <label>Операции (JSON)</label>
+          <textarea id="editOps">[{"pattern":"Иванов","replacement":"Петров"}]</textarea>
+        </div>
+        <div class="row">
+          <label>Инструкция (естественный язык)</label>
+          <textarea id="editInstr">Замени Иванов на Петров</textarea>
+        </div>
+        <div class="actions">
+          <button onclick="runEdit()">Загрузить и изменить (JSON)</button>
+          <button onclick="runAiEdit()" class="secondary">AI-редактировать</button>
+        </div>
+      </div>
+    </div>
+    <div class="right">
+      <pre id="editResult"></pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s=>document.querySelector(s), tplSel=$('#tpl'), fields=$('#fields'), iframe=$('#preview'), hint=$('#hint');
+let currentTpl=null, payload={};
+
+function debounce(fn,t=250){let id;return(...a)=>{clearTimeout(id);id=setTimeout(()=>fn(...a),t);};}
+
+function showTab(name){
+  document.querySelectorAll('main section').forEach(s=>s.classList.remove('active'));
+  document.querySelector('#tab-'+name).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  document.querySelector('#tabBtn-'+name).classList.add('active');
+}
+
+async function fetchTemplates(){
+  const res=await fetch('/doc/templates');
+  const items=await res.json();
+  tplSel.innerHTML='';
+  for(const t of items){
+    const opt=document.createElement('option');
+    opt.value=t.id; opt.textContent=`${t.name} (${t.engine})`;
+    opt.dataset.engine=t.engine;
+    opt.dataset.placeholders=JSON.stringify(t.placeholders||[]);
+    tplSel.appendChild(opt);
+  }
+  if(items.length){ tplSel.value=items[0].id; onTplChange(); }
+}
+
+function suggestValue(name){
+  const m={order_number:'123/Б', order_date:new Date().toISOString().slice(0,10),
+    employee_fio:'Иванов И.И.', position:'Системный администратор',
+    basis:'Служебная записка №45 от 19.08.2025', executor:'Петров П.П.',
+    signature_name:'Сидоров С.С.', signature_title:'Директор'};
+  return m[name]||'';
+}
+
+function buildFields(placeholders){
+  fields.innerHTML=''; payload={};
+  for(const name of placeholders){
+    const row=document.createElement('div'); row.className='row';
+    const lab=document.createElement('label'); lab.textContent=name; row.appendChild(lab);
+    const inp=document.createElement('input'); inp.placeholder=name; inp.value=suggestValue(name); row.appendChild(inp);
+    inp.addEventListener('input',debounce(()=>{ payload[name]=inp.value; renderPreview(); },150));
+    payload[name]=inp.value;
+    fields.appendChild(row);
+  }
+  renderPreview();
+}
+
+async function onTplChange(){
+  currentTpl=tplSel.value;
+  const placeholders=JSON.parse(tplSel.selectedOptions[0].dataset.placeholders||'[]');
+  const engine=tplSel.selectedOptions[0].dataset.engine||'';
+  buildFields(placeholders);
+  hint.textContent=`ID: ${currentTpl} • engine=${engine}`;
+}
+
+async function renderPreview(){
+  if(!currentTpl) return;
+  const res=await fetch('/doc/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id:currentTpl,payload})});
+  const data=await res.json();
+  const doc=iframe.contentDocument||iframe.contentWindow.document;
+  if(data && data.html){ doc.open(); doc.write(data.html); doc.close(); }
+  else { doc.open(); doc.write('<pre>'+JSON.stringify(data,null,2)+'</pre>'); doc.close(); }
+}
+
+async function download(kind){
+  const body=JSON.stringify({template_id:currentTpl,output:kind,filename:'document',payload});
+  const res=await fetch('/doc/generate',{method:'POST',headers:{'Content-Type':'application/json'},body});
+  const blob=await res.blob();
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=(kind==='pdf'?'document.pdf':'document.html');
+  a.click(); URL.revokeObjectURL(url);
+}
+
+$('#dl_html').addEventListener('click',()=>download('html'));
+$('#dl_pdf').addEventListener('click',()=>download('pdf'));
+tplSel.addEventListener('change', onTplChange);
+fetchTemplates();
+
+// ====== Редактор ======
+async function runEdit(){
+  const file = document.getElementById('editFile').files[0];
+  if(!file){ alert("Выберите файл!"); return; }
+  const ops = document.getElementById('editOps').value || "[]";
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("ops", ops);
+
+  const res = await fetch("/doc/edit", { method:"POST", body:formData });
+  const data = await res.json();
+  document.getElementById("editResult").textContent = JSON.stringify(data,null,2);
+
+  if(data.file_base64){ saveFile(data); }
+}
+
+// ====== AI-Редактор ======
+async function runAiEdit(){
+  const file = document.getElementById('editFile').files[0];
+  if(!file){ alert("Выберите файл!"); return; }
+  const instr = document.getElementById('editInstr').value || "";
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("instruction", instr);
+
+  const res = await fetch("/doc/ai-edit", { method:"POST", body:formData });
+  const data = await res.json();
+  document.getElementById("editResult").textContent = JSON.stringify(data,null,2);
+
+  if(data.file_base64){ saveFile(data); }
+}
+
+function saveFile(data){
+  const bin = atob(data.file_base64);
+  const buf = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([buf], {type:data.content_type}));
+  const a=document.createElement("a");
+  a.href=url; a.download=data.filename; a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</html>

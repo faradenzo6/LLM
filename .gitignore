@@ -1,0 +1,28 @@
+# env/секреты
+.env
+*.key
+*.crt
+*.pem
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# логи и артефакты
+/ai-gateway/*.log
+/ai-gateway/logs/
+/var/log/ai-gateway/
+/ai-gateway/*.pdf
+
+# данные и тома
+/qdrant/
+/qdrant/storage/
+/tei-data/
+/opt/
+/data/
+/*.db
+
+# IDE
+.vscode/
+.idea/

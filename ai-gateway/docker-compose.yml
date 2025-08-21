@@ -1,0 +1,82 @@
+version: "3.9"
+
+
+networks:
+ai-net:
+name: ai-net
+driver: bridge
+
+
+volumes:
+qdrant_data:
+ai_gateway_logs:
+ai_gateway_templates:
+
+
+services:
+qdrant:
+image: qdrant/qdrant:latest
+networks: [ai-net]
+ports: ["6333:6333","6334:6334"]
+volumes:
+- qdrant_data:/qdrant/storage
+restart: unless-stopped
+
+
+tei-embeddings:
+image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+networks: [ai-net]
+ports: ["8080:80"]
+environment:
+- MODEL_ID=thenlper/gte-small
+restart: unless-stopped
+
+
+vllm:
+image: vllm/vllm-openai:v0.7.2
+networks: [ai-net]
+ports: ["8000:8000"]
+environment:
+- VLLM_API_KEY=${VLLM_API_KEY}
+command: >
+python3 -m vllm.entrypoints.openai.api_server
+--api-key ${VLLM_API_KEY}
+--model ${VLLM_MODEL}
+--dtype float16
+--max-model-len 8192
+deploy:
+resources:
+reservations:
+devices:
+- capabilities: ["gpu"]
+count: -1
+restart: unless-stopped
+
+
+ai-gateway:
+build:
+context: ./ai-gateway
+dockerfile: Dockerfile
+image: ai-gateway:latest
+networks: [ai-net]
+ports: ["9000:8000"]
+environment:
+- AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}
+- VLLM_URL=http://vllm:8000/v1/chat/completions
+- VLLM_API_KEY=${VLLM_API_KEY}
+- QDRANT_URL=http://qdrant:6333
+- TEI_URL=http://tei-embeddings:80/embed
+- AI_CORS_ORIGINS=${AI_CORS_ORIGINS}
+- VLLM_MODEL=${VLLM_MODEL}
+# - JIRA_BASE_URL=${JIRA_BASE_URL}
+# - JIRA_USER=${JIRA_USER}
+# - JIRA_PASS=${JIRA_PASS}
+volumes:
+- ai_gateway_logs:/var/log/ai-gateway
+- ai_gateway_templates:/app/doc-templates
+# - ./ai-gateway/static:/app/static # если хотим сразу подложить SPA
+depends_on:
+- vllm
+- tei-embeddings
+- qdrant
+restart: unless-stopped
